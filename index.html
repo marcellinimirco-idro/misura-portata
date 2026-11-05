@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calcolo Portata Fiume (Trapezi con GPS)</title>
+    <style>
+        body { font-family: sans-serif; background: #f4f6f9; margin: 0; padding: 15px; color: #333; }
+        h1 { font-size: 1.2rem; color: #1f4e78; text-align: center; }
+        .card { background: #fff; padding: 12px; border-radius: 8px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        label { font-size: 0.85rem; font-weight: bold; display: block; margin-top: 6px; }
+        input, select { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        .quote-box { background: #e9eef4; padding: 8px; border-radius: 4px; margin-top: 6px; font-size: 0.85rem; color: #1f4e78; }
+        button { background: #1f4e78; color: white; border: none; padding: 10px; width: 100%; border-radius: 4px; font-weight: bold; margin-top: 10px; cursor: pointer; }
+        .btn-green { background: #27ae60; }
+        .btn-red { background: #c0392b; }
+        .btn-gps { background: #2980b9; margin-top: 6px; }
+        .res { background: #d9e1f2; padding: 10px; border-radius: 6px; text-align: center; font-size: 1.1rem; font-weight: bold; color: #1f4e78; margin-top: 15px; }
+        ul { padding-left: 20px; font-size: 0.85rem; }
+    </style>
+</head>
+<body>
+
+    <h1>Calcolo Portata Idrica (Trapezi)</h1>
+    
+    <!-- INTESTAZIONE RILIEVO CON GPS -->
+    <div class="card">
+        <h3 style="margin-top:0; font-size:1rem; color:#1f4e78;">Dati Intestazione & GPS</h3>
+        <label>Località / Fiume:</label>
+        <input type="text" id="localita" value="Fiume Esempio">
+
+        <label>Data e Ora Inizio:</label>
+        <input type="datetime-local" id="dataOra">
+
+        <label>Strumento Utilizzato:</label>
+        <input type="text" id="strumento" value="Mulinello Idrometrico">
+
+        <label>Coordinate GPS (Sezione):</label>
+        <input type="text" id="gpsCoord" placeholder="Es. 43.6158, 13.5189 o premi il tasto">
+        <button class="btn-gps" onclick="rilevaGPS()">📍 Rileva Posizione GPS Attuale</button>
+    </div>
+
+    <!-- INSERIMENTO VERTICALI -->
+    <div class="card">
+        <h3 style="margin-top:0; font-size:1rem; color:#1f4e78;">Inserimento Verticale</h3>
+        <label>Distanza dalla sponda X (m):</label>
+        <input type="number" id="x" step="0.1" value="0.0">
+
+        <label>Profondità Totale H (m):</label>
+        <input type="number" id="h" step="0.01" value="0.00" oninput="aggiornaQuote()">
+
+        <div class="quote-box" id="infoQuote">
+            <b>Quote posizionamento mulinello (da superficie):</b><br>
+            • 0.2H: 0.00 m | • 0.6H: 0.00 m | • 0.8H: 0.00 m
+        </div>
+
+        <label>Metodo Misura:</label>
+        <select id="method" onchange="toggleMethod()">
+            <option value="Sponda">Sponda (H=0, v=0)</option>
+            <option value="1">1 Punto (0.6h)</option>
+            <option value="2" selected>2 Punti (0.2h e 0.8h)</option>
+        </select>
+
+        <div id="divV1">
+            <label>Velocità v (0.6h o 0.2h) [m/s]:</label>
+            <input type="number" id="v1" step="0.01" value="0.00">
+        </div>
+
+        <div id="divV2">
+            <label>Velocità v (0.8h) [m/s]:</label>
+            <input type="number" id="v2" step="0.01" value="0.00">
+        </div>
+
+        <button onclick="calcolaVerticale()">Aggiungi Verticale</button>
+    </div>
+
+    <!-- RIEPILOGO MISURE -->
+    <div class="card">
+        <h3 style="margin-top:0; font-size:1rem;">Verticali Inserite</h3>
+        <ul id="listaMisure">Nessuna verticale inserita</ul>
+        
+        <button class="btn-green" onclick="esportaCSV()">Esporta Dati in CSV (Excel)</button>
+        <button class="btn-red" onclick="resetDati()">Azzera Tutti i Dati</button>
+    </div>
+
+    <div class="res" id="risultatoQ">
+        Portata Totale (Q): 0.000 m³/s
+    </div>
+
+<script>
+    let verticali = [];
+
+    window.onload = function() {
+        let now = new Date();
+        let offset = now.getTimezoneOffset() * 60000;
+        let localISOTime = (new Date(now - offset)).toISOString().slice(0, 16);
+        document.getElementById('dataOra').value = localISOTime;
+    };
+
+    function rilevaGPS() {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                function(position) {
+                    let lat = position.coords.latitude.toFixed(6);
+                    let lon = position.coords.longitude.toFixed(6);
+                    document.getElementById('gpsCoord').value = `${lat}, ${lon}`;
+                    alert("Posizione GPS rilevata con successo!");
+                },
+                function(error) {
+                    alert("Impossibile rilevare la posizione GPS. Assicurati di aver attivato la localizzazione sul telefono.");
+                }
+            );
+        } else {
+            alert("La geolocalizzazione non è supportata da questo browser.");
+        }
+    }
+
+    function aggiornaQuote() {
+        let h = parseFloat(document.getElementById('h').value) || 0;
+        let q02 = (h * 0.2).toFixed(2);
+        let q06 = (h * 0.6).toFixed(2);
+        let q08 = (h * 0.8).toFixed(2);
+
+        document.getElementById('infoQuote').innerHTML = 
+            `<b>Quote posizionamento mulinello (da superficie):</b><br>` +
+            `• 0.2H: <b>${q02} m</b> | • 0.6H: <b>${q06} m</b> | • 0.8H: <b>${q08} m</b>`;
+    }
+
+    function toggleMethod() {
+        let m = document.getElementById('method').value;
+        if (m === 'Sponda') {
+            document.getElementById('h').value = "0.00";
+            document.getElementById('v1').value = "0.00";
+            document.getElementById('v2').value = "0.00";
+            document.getElementById('divV1').style.display = 'block';
+            document.getElementById('divV2').style.display = 'block';
+            aggiornaQuote();
+        } else {
+            document.getElementById('divV2').style.display = (m === '2') ? 'block' : 'none';
+        }
+    }
+
+    function calcolaVerticale() {
+        let x = parseFloat(document.getElementById('x').value);
+        let h = parseFloat(document.getElementById('h').value);
+        let method = document.getElementById('method').value;
+        let v1 = parseFloat(document.getElementById('v1').value) || 0;
+        let v2 = parseFloat(document.getElementById('v2').value) || 0;
+
+        let v_media = 0;
+        if (method === '2') {
+            v_media = (v1 + v2) / 2;
+        } else if (method === '1') {
+            v_media = v1;
+        } else {
+            v_media = 0;
+            h = 0;
+        }
+
+        verticali.push({ x, h, method, v1, v2, v_media });
+        aggiornaLista();
+    }
+
+    function aggiornaLista() {
+        let lista = document.getElementById('listaMisure');
+        lista.innerHTML = '';
+        
+        verticali.sort((a, b) => a.x - b.x);
+
+        verticali.forEach((item, index) => {
+            let li = document.createElement('li');
+            li.textContent = `Vert ${index}: X=${item.x}m, H=${item.h}m, Metodo: ${item.method}, Vmed=${item.v_media.toFixed(2)}m/s`;
+            lista.appendChild(li);
+        });
+
+        calcolaPortataTotale();
+    }
+
+    function calcolaPortataTotale() {
+        if (verticali.length < 2) {
+            document.getElementById('risultatoQ').innerText = "Portata Totale (Q): 0.000 m³/s (Aggiungi min. 2 verticali)";
+            return;
+        }
+
+        let Q_tot = 0;
+        for (let i = 1; i < verticali.length; i++) {
+            let dx = verticali[i].x - verticali[i-1].x;
+            let h1 = verticali[i-1].h, h2 = verticali[i].h;
+            let v1 = verticali[i-1].v_media, v2 = verticali[i].v_media;
+
+            let q_parziale = dx * ( (h1 * v1 + h2 * v2) / 2 );
+            Q_tot += q_parziale;
+        }
+
+        document.getElementById('risultatoQ').innerText = `Portata Totale (Q): ${Q_tot.toFixed(3)} m³/s`;
+    }
+
+    function resetDati() {
+        verticali = [];
+        aggiornaLista();
+        document.getElementById('risultatoQ').innerText = "Portata Totale (Q): 0.000 m³/s";
+    }
+
+    function esportaCSV() {
+        if (verticali.length === 0) {
+            alert("Nessun dato da esportare!");
+            return;
+        }
+
+        let localita = document.getElementById('localita').value;
+        let dataOra = document.getElementById('dataOra').value;
+        let strumento = document.getElementById('strumento').value;
+        let gps = document.getElementById('gpsCoord').value;
+
+        let csvContent = "data:text/csv;charset=utf-8,";
+        csvContent += `Localita:;${localita}\n`;
+        csvContent += `Coordinate GPS:;${gps}\n`;
+        csvContent += `Data e Ora:;${dataOra}\n`;
+        csvContent += `Strumento:;${strumento}\n\n`;
+        csvContent += "Verticale;Distanza X (m);Profondita H (m);Metodo;Velocita Media V (m/s)\n";
+
+        verticali.forEach((item, index) => {
+            csvContent += `${index};${item.x};${item.h};${item.method};${item.v_media.toFixed(3)}\n`;
+        });
+
+        let encodedUri = encodeURI(csvContent);
+        let link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", "rilievo_portata_fiume_gps.csv");
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+</script>
+</body>
+</html>
